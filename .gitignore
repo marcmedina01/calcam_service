@@ -8,3 +8,5 @@ package-lock.json
 *.dev
 .DS_Store
 package-lock.json
+secrets.json
+.gitignore
