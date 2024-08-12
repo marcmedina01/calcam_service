@@ -93,7 +93,7 @@ router.post('/processphoto', async function (req, res) {
           "content": [
             {
               "type": "text",
-              "text": "The user sent a picture of a food. Determine what the food is and the number of calories and send the results in only the following format. Do not include anything else. just a json string of the description and the calories:\n\n{'description':'<a short one sentence description of the food>','calories':<the amount of calories of the food}"
+              "text": "The user sent a picture of a food. Determine what the food is and the number of calories and send the results in only the following format. Do not include anything else. just a json string of the description and the calories:\n\n{'description':'<a short one sentence description of the food>','calories':<the amount of calories of the food}\n\n If the image is not food of any kind or is not recognizable or if you don't know who this is. return the following {'description':'No food image found.','calories':0}"
             }
           ]
         },
@@ -123,10 +123,12 @@ router.post('/processphoto', async function (req, res) {
 
     const completion = await openai.chat.completions.create(payload);
 
-    console.log('Response from OpenAI:', completion);
+    console.log('Response from OpenAI:', completion.choices[0].message.content);
     content = JSON.parse(completion.choices[0].message.content.replace(/'/g, '"'))
     // content = JSON.parse("{'description':'A sandwich with melted cheese and vegetables, served with potato chips and a side of mixedfruit.','calories':700}".replace(/'/g, '"'))
     res.send(content);
+
+    // throw "error"
   } catch (error) {
     console.error('Error calling OpenAI API:', error);
     res.status(500).json({ error: 'Error calling OpenAI API' });
