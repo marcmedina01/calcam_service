@@ -17,26 +17,30 @@ function convertJson(input) {
   const result = {};
 
   input.forEach(item => {
-      const date = item.date;
-      if (!result[date]) {
-          result[date] = {
-              daycalorie: 0,
-              meals: []
-          };
-      }
-      result[date].daycalorie += item.calorie;
-      result[date].meals.push({
-        description: item.meal,
-        period: item.timeofday,
-        time: item.time,
-        calories: item.calorie
-      });
+    const date = item.date;
+    if (!result[date]) {
+      result[date] = {
+        id: item.id,
+        daycalorie: 0,
+        meals: []
+      };
+    }
+    result[date].daycalorie += item.calorie;
+    result[date].meals.push({
+      mealid: item.mealid,
+      description: item.meal,
+      period: item.timeofday,
+      time: item.time,
+      timestamp: item.timestamp,
+      calories: item.calorie
+    });
   });
 
   return Object.keys(result).map(date => ({
-      date: date,
-      daycalorie: result[date].daycalorie,
-      meals: result[date].meals
+    id: result[date].id,
+    date: date,
+    daycalorie: result[date].daycalorie,
+    meals: result[date].meals
   }));
 }
 
@@ -138,7 +142,7 @@ router.post('/processphoto', async function (req, res) {
 
 });
 
-router.get('/userinfo/:userid', async (req, res) => {
+router.get('/:userid/info', async (req, res) => {
 
 
   const userid = req.params.userid;
@@ -166,7 +170,7 @@ router.get('/userinfo/:userid', async (req, res) => {
   res.send(results);
 })
 
-router.get('/meals/:userid', async (req, res) => {
+router.get('/:userid/meals', async (req, res) => {
 
 
   const userid = req.params.userid;
@@ -174,26 +178,33 @@ router.get('/meals/:userid', async (req, res) => {
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
   let results = await database.sql`
- select user, meal, calorie, 
+  select DENSE_RANK() OVER (ORDER BY DATE(date / 1000, 'unixepoch') DESC) AS id,user, id as mealid, meal, calorie, 
 			CASE
 				WHEN DATE(date / 1000, 'unixepoch') = DATE('now') THEN 'Today'
+        WHEN DATE(date / 1000, 'unixepoch') = DATE('now', '-1 day') THEN 'Yesterday'
 				ELSE strftime('%m-%d-%Y', datetime(date / 1000, 'unixepoch'))
-			END AS date, 
-          CASE 
-          WHEN strftime('%H', datetime(date / 1000, 'unixepoch')) BETWEEN '06' AND '11' THEN 'MRNG'
-          WHEN strftime('%H', datetime(date / 1000, 'unixepoch')) BETWEEN '12' AND '13' THEN 'NOON'
-          WHEN strftime('%H', datetime(date / 1000, 'unixepoch')) BETWEEN '14' AND '17' THEN 'AFTR'
-          ELSE 'NGHT'
-      END AS timeofday,
-	  strftime('%H:%M', datetime(date / 1000, 'unixepoch')) as time
+			END AS date,
+	  strftime('%H:%M', datetime(date / 1000, 'unixepoch')) as time,
+    date as timestamp
 	  from meals where user = 1
-  order by date desc;`
+    order by id asc, mealid DESC;`
+
 
   const outputJson = convertJson(results);
 
 
   res.send(outputJson);
 })
+
+router.delete('/:userid/meals/:mealid', async (req, res) => {
+  const userid = req.params.userid;
+  const mealid = req.params.mealid;
+  let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+
+  let results = await database.sql`delete from meals where id=${mealid} and user = ${userid};`
+  res.send(results);
+})
+
 
 router.post('/meals/log', async (req, res) => {
   const { description } = req.body;
