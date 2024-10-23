@@ -10,3 +10,4 @@ package-lock.json
 package-lock.json
 secrets.json
 .gitignore
+fbkey.json

@@ -4,6 +4,7 @@ const OpenAI = require('openai');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
 const { Database } = require('@sqlitecloud/drivers');
+const authenticate = require('../authentication');
 
 require('dotenv').config();
 
@@ -60,8 +61,14 @@ router.get('/', authenticateClient, function (req, res) {
   res.send('{"message":"Hello from the custom server!"}');
 });
 
-// Answer API requests.
-router.get('/test', function (req, res) {
+getuserid = async (authid) => {
+  let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+  let results = await database.sql`select id from users where googleid =${authid}`
+  return results[0].id
+
+
+}
+router.get('/test', authenticate, function (req, res) {
   res.set('Content-Type', 'application/json');
   let date = new Date();
 
@@ -78,7 +85,7 @@ router.get('/testSQLITE', async function (req, res) {
 });
 
 
-router.post('/processphoto', async function (req, res) {
+router.post('/processphoto', authenticate, async function (req, res) {
 
   const { image } = req.body;
   const { hint } = req.body;
@@ -142,38 +149,50 @@ router.post('/processphoto', async function (req, res) {
 
 });
 
-router.get('/:userid/info', async (req, res) => {
+router.get('/:userid/info', authenticate, async (req, res) => {
 
 
-  const userid = req.params.userid;
+  const userid = await getuserid(req.params.userid)
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
+
   let results = await database.sql`
-                SELECT u.*,
-                  m.curcal,
-                  u.targetcalorie - m.curcal AS remainingcalories,
-                  CASE
-                  WHEN curcal > u.targetcalorie THEN 'OVER'
-                  ELSE 'UNDER'
-                  END                                AS overunder,
-                Date('now') AS date
-                FROM (SELECT ${userid}  as USER, IFNULL(
-                    (select Sum(calorie) AS curcal
-                    from meals
-                    WHERE  USER = ${userid} 
+                SELECT u.*, 
+                      IFNULL(m.curcal, 0) AS curcal, 
+                      u.targetcalorie - IFNULL(m.curcal, 0) AS remainingcalories, 
+                      CASE 
+                          WHEN IFNULL(m.curcal, 0) > u.targetcalorie THEN 'OVER'
+                          ELSE 'UNDER'
+                      END AS overunder,
+                      Date('now') AS date
+                FROM users u
+                LEFT JOIN (
+                    SELECT user, SUM(calorie) AS curcal
+                    FROM meals
+                    WHERE user = ${userid}
                     AND Date(Datetime(date / 1000, 'unixepoch')) = Date('now')
-                    GROUP  BY Strftime('%d', Datetime(date / 1000, 'unixepoch'))), 0) as curcal) m
-                JOIN  users u
-                on u.id = m.user
-                ORDER  BY date DESC; `
+                    GROUP BY user
+                ) m ON u.id = m.user
+                WHERE u.id =${userid}
+                ORDER BY date DESC;`
   res.send(results);
 })
 
-router.get('/:userid/meals', async (req, res) => {
+router.get('/:userid/exist', authenticate, async (req, res) => {
+
+  let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+
+  let results = await database.sql`SELECT EXISTS(SELECT 1 FROM users WHERE googleid = ${req.params.userid}) as exist;`
+
+  res.send(results);
+})
 
 
-  const userid = req.params.userid;
+router.get('/:userid/meals', authenticate, async (req, res) => {
+
+
+  const userid = await getuserid(req.params.userid)
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
@@ -186,7 +205,7 @@ router.get('/:userid/meals', async (req, res) => {
 			END AS date,
 	  strftime('%H:%M', datetime(date / 1000, 'unixepoch')) as time,
     date as timestamp
-	  from meals where user = 1
+	  from meals where user = ${userid}
     order by id asc, mealid DESC;`
 
 
@@ -196,8 +215,36 @@ router.get('/:userid/meals', async (req, res) => {
   res.send(outputJson);
 })
 
-router.delete('/:userid/meals/:mealid', async (req, res) => {
-  const userid = req.params.userid;
+
+router.put('/:userid/info', authenticate, async (req, res) => {
+  const { targetcalorie } = req.body;
+
+  const userid = await getuserid(req.params.userid)
+  const date = new Date()
+
+  let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+
+  let results = await database.sql`UPDATE users set targetcalorie=${targetcalorie} where id=${userid} `
+  res.send(results);
+})
+
+
+router.post('/:userid/info', authenticate, async (req, res) => {
+  const { targetcalorie } = req.body;
+  const { name } = req.body;
+  const date = new Date()
+
+  let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+  console.log(`insert into users(user,targetcalorie,googleid) values ("${name}",${targetcalorie},"${req.params.userid}");`)
+  let results = await database.sql`insert into users(user,targetcalorie,googleid) values (${name},${targetcalorie},${req.params.userid});`
+  res.send(results);
+})
+
+
+router.delete('/:userid/meals/:mealid', authenticate, async (req, res) => {
+
+  const userid = await getuserid(req.params.userid)
+
   const mealid = req.params.mealid;
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
@@ -206,16 +253,16 @@ router.delete('/:userid/meals/:mealid', async (req, res) => {
 })
 
 
-router.post('/meals/log', async (req, res) => {
+router.post('/meals/log', authenticate, async (req, res) => {
   const { description } = req.body;
   const { calories } = req.body;
   const { user } = req.body;
-
+  const userid = await getuserid(user)
   const date = new Date()
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
-  let results = await database.sql`INSERT INTO meals(user,meal,calorie,date) values (${user},${description},${calories},${date.getTime()}) `
+  let results = await database.sql`INSERT INTO meals(user,meal,calorie,date) values (${userid},${description},${calories},${date.getTime()}) `
   res.send(results);
 })
 
