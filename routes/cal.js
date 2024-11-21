@@ -33,7 +33,10 @@ function convertJson(input) {
       period: item.timeofday,
       time: item.time,
       timestamp: item.timestamp,
-      calories: item.calorie
+      calories: item.calorie,
+      fat:item.fat,
+      protein:item.protein,
+      carb:item.carbs,
     });
   });
 
@@ -86,7 +89,7 @@ router.get('/testSQLITE', async function (req, res) {
 
 
 router.post('/processphoto', authenticate, async function (req, res) {
-
+  console.log('processphoto')
   const { image } = req.body;
   const { hint } = req.body;
 
@@ -97,14 +100,14 @@ router.post('/processphoto', authenticate, async function (req, res) {
   try {
 
     payload = {
-      "model": "gpt-4o",
+      "model": "gpt-4o-mini",
       "messages": [
         {
           "role": "system",
           "content": [
             {
               "type": "text",
-              "text": "The user sent a picture of a food. Determine what the food is and the number of calories and send the results in only the following format. Do not include anything else. just a json string of the description and the calories:\n\n{'description':'<a short one sentence description of the food>','calories':<the amount of calories of the food}\n\n If the image is not food of any kind or is not recognizable or if you don't know who this is. return the following {'description':'No food image found.','calories':0}"
+              "text": "The user sent a picture of a food. Determine what the food is and the number of calories and send the results in only the following format. Do not include anything else. just a json string of the description and the calories, carbohydrates, fat, and protein:\n{'description':'<a short one sentence description of the food>','calories':<the amount of calories of the food>,'carbs':<the amount of carbohydrates of the food in grams>,'fat':<the amount of fat of the food in grams>,'protein':<the amount of protein of the food in grams>}\n\nn If the image is not food of any kind or is not recognizable or if you don't know what the image is; return the following {'description':'No food image found.','calories':0,'carbs':0,'fat':0,'protein':0} \n\n if the image is a person return the following return the following {'description':'People are not food.','calories':0,'carbs':0,'fat':0,'protein':0}"
             }
           ]
         },
@@ -112,14 +115,68 @@ router.post('/processphoto', authenticate, async function (req, res) {
           "role": "user",
           "content": [
             {
+              "type": "image_url",
+              "image_url": {
+                "url": "data:image/png;base64,..."
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
               "type": "text",
-              "text": "What’s in this image?"
-            },
+              "text": "{'description':'A piece of baked chicken breast with a crispy seasoning.','calories':165,'carbs':0,'fat':3.6,'protein':31}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
             {
               "type": "image_url",
               "image_url": {
-                "url": image
+                "url": "data:image/png;base64,..."
               }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "{'description':'A sandwich with melted cheese and greens, served with potato chips and a fruit medley.','calories':550,'carbs':65,'fat':25,'protein':15}"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": "data:image/png;base64,..."
+              }
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "{'description':'A piece of baked chicken breast with a crispy seasoning.','calories':165,'carbs':0,'fat':3.6,'protein':31}"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"description\":\"A piece of baked chicken breast with a crispy seasoning.\",\"calories\":165,\"carbs\":0,\"fat\":3.6,\"protein\":31}"
             }
           ]
         }
@@ -130,6 +187,9 @@ router.post('/processphoto', authenticate, async function (req, res) {
       "top_p": 1,
       "frequency_penalty": 0,
       "presence_penalty": 0,
+      "response_format": {
+        "type": "json_object"
+      },
     }
 
     const completion = await openai.chat.completions.create(payload);
@@ -137,6 +197,7 @@ router.post('/processphoto', authenticate, async function (req, res) {
     console.log('Response from OpenAI:', completion.choices[0].message.content);
     content = JSON.parse(completion.choices[0].message.content.replace(/'/g, '"'))
     // content = JSON.parse("{'description':'A sandwich with melted cheese and vegetables, served with potato chips and a side of mixedfruit.','calories':700}".replace(/'/g, '"'))
+
     res.send(content);
 
     // throw "error"
@@ -151,36 +212,52 @@ router.post('/processphoto', authenticate, async function (req, res) {
 
 router.get('/:userid/info', authenticate, async (req, res) => {
 
-
+  console.log(`/${req.params.userid}/info`)
   const userid = await getuserid(req.params.userid)
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+  console.log(userid)
 
-
-  let results = await database.sql`
-                SELECT u.*, 
-                      IFNULL(m.curcal, 0) AS curcal, 
-                      u.targetcalorie - IFNULL(m.curcal, 0) AS remainingcalories, 
-                      CASE 
-                          WHEN IFNULL(m.curcal, 0) > u.targetcalorie THEN 'OVER'
-                          ELSE 'UNDER'
-                      END AS overunder,
-                      Date('now') AS date
-                FROM users u
-                LEFT JOIN (
-                    SELECT user, SUM(calorie) AS curcal
-                    FROM meals
-                    WHERE user = ${userid}
-                    AND Date(Datetime(date / 1000, 'unixepoch')) = Date('now')
-                    GROUP BY user
-                ) m ON u.id = m.user
-                WHERE u.id =${userid}
-                ORDER BY date DESC;`
+  let results = await database.sql`SELECT u.*, 
+                IFNULL(m.curcal, 0) AS curcal, 
+                tm.cal AS targetcalories, 
+                IFNULL(m.curcal, 0) AS currentcalories, 
+                tm.cal - IFNULL(m.curcal, 0) AS remainingcalories, 
+                tm.fat AS targetfat, 
+                IFNULL(m.curfat, 0) AS curfat, 
+                tm.fat - IFNULL(m.curfat, 0) AS remainingfat, 
+                tm.prot AS targetprotein, 
+                IFNULL(m.curprot, 0) AS curprotein, 
+                tm.prot - IFNULL(m.curprot, 0) AS remainingprotein, 
+                tm.carb AS targetcarbs, 
+                IFNULL(m.curcarb, 0) AS curcarbs, 
+                tm.carb - IFNULL(m.curcarb, 0) AS remainingcarbs, 
+                CASE 
+                    WHEN IFNULL(m.curcal, 0) > tm.cal THEN 'OVER'
+                    ELSE 'UNDER'
+                END AS overunder,
+                Date('now') AS date
+          FROM users u
+          LEFT JOIN (
+              SELECT userid, 
+                    SUM(calorie) AS curcal, 
+                    SUM(fat) AS curfat, 
+                    SUM(prot) AS curprot, 
+                    SUM(carb) AS curcarb
+              FROM meals
+              WHERE userid = ${userid}
+              AND Date(Datetime(date / 1000, 'unixepoch')) = Date('now')
+              GROUP BY userid
+          ) m ON u.id = m.userid
+          LEFT JOIN targetmacros tm ON u.id = tm.userid
+          WHERE u.id = ${userid}
+          ORDER BY date DESC;`
+  
   res.send(results);
 })
 
 router.get('/:userid/exist', authenticate, async (req, res) => {
-
+  console.log(`/${req.params.userid}/exist`)
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
   let results = await database.sql`SELECT EXISTS(SELECT 1 FROM users WHERE googleid = ${req.params.userid}) as exist;`
@@ -190,23 +267,32 @@ router.get('/:userid/exist', authenticate, async (req, res) => {
 
 
 router.get('/:userid/meals', authenticate, async (req, res) => {
-
+  console.log(`/${req.params.userid}/meals`)
 
   const userid = await getuserid(req.params.userid)
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
   let results = await database.sql`
-  select DENSE_RANK() OVER (ORDER BY DATE(date / 1000, 'unixepoch') DESC) AS id,user, id as mealid, meal, calorie, 
-			CASE
-				WHEN DATE(date / 1000, 'unixepoch') = DATE('now') THEN 'Today'
-        WHEN DATE(date / 1000, 'unixepoch') = DATE('now', '-1 day') THEN 'Yesterday'
-				ELSE strftime('%m-%d-%Y', datetime(date / 1000, 'unixepoch'))
-			END AS date,
-	  strftime('%H:%M', datetime(date / 1000, 'unixepoch')) as time,
-    date as timestamp
-	  from meals where user = ${userid}
-    order by id asc, mealid DESC;`
+  SELECT DENSE_RANK() OVER (ORDER BY DATE(date / 1000, 'unixepoch') DESC) AS id, 
+       userid, 
+       id AS mealid, 
+       meal, 
+       calorie, 
+       fat, 
+       prot AS protein, 
+       carb AS carbs,
+       CASE
+           WHEN DATE(date / 1000, 'unixepoch') = DATE('now') THEN 'Today'
+           WHEN DATE(date / 1000, 'unixepoch') = DATE('now', '-1 day') THEN 'Yesterday'
+           ELSE strftime('%m-%d-%Y', datetime(date / 1000, 'unixepoch'))
+       END AS date,
+       strftime('%H:%M', datetime(date / 1000, 'unixepoch')) AS time,
+       date AS timestamp
+  FROM meals
+  WHERE userid = ${userid}
+  ORDER BY id ASC, mealid DESC;
+`
 
 
   const outputJson = convertJson(results);
@@ -217,52 +303,70 @@ router.get('/:userid/meals', authenticate, async (req, res) => {
 
 
 router.put('/:userid/info', authenticate, async (req, res) => {
+  console.log(`put - /${req.params.userid}/info`)
+
   const { targetcalorie } = req.body;
+  const { targetfat } = req.body;
+  const { targetprot } = req.body;
+  const { targetcarb } = req.body;
 
   const userid = await getuserid(req.params.userid)
   const date = new Date()
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
-  let results = await database.sql`UPDATE users set targetcalorie=${targetcalorie} where id=${userid} `
+  let results = await database.sql`UPDATE targetmacros set cal=${targetcalorie}, fat=${targetfat}, prot=${targetprot}, carb=${targetcarb} where userid=${userid} `
   res.send(results);
 })
 
 
 router.post('/:userid/info', authenticate, async (req, res) => {
+  console.log(`post - /${req.params.userid}/info`)
+
   const { targetcalorie } = req.body;
+  const { targetfat } = req.body;
+  const { targetprot } = req.body;
+  const { targetcarb } = req.body;
+
   const { name } = req.body;
   const date = new Date()
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
-  console.log(`insert into users(user,targetcalorie,googleid) values ("${name}",${targetcalorie},"${req.params.userid}");`)
-  let results = await database.sql`insert into users(user,targetcalorie,googleid) values (${name},${targetcalorie},${req.params.userid});`
-  res.send(results);
+
+  let resultsuser = await database.sql`insert into users(user,googleid) values (${name},${req.params.userid});`
+  const userid = await getuserid(req.params.userid)
+  let resultmacros = await database.sql`insert into targetmacros(userid,cal,fat,prot,carb) values (${userid},${targetcalorie},${targetfat},${targetprot},${targetcarb});`
+  res.send(resultsuser);
 })
 
 
 router.delete('/:userid/meals/:mealid', authenticate, async (req, res) => {
+  console.log(`delete - /${req.params.userid}/meals/${req.params.mealid}`)
 
   const userid = await getuserid(req.params.userid)
 
   const mealid = req.params.mealid;
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
-  let results = await database.sql`delete from meals where id=${mealid} and user = ${userid};`
+  let results = await database.sql`delete from meals where id=${mealid} and userid = ${userid};`
   res.send(results);
 })
 
 
 router.post('/meals/log', authenticate, async (req, res) => {
+  console.log(`post - /meals/log`)
   const { description } = req.body;
   const { calories } = req.body;
+  const { fat } = req.body;
+  const { prot } = req.body;
+  const { carb } = req.body;
   const { user } = req.body;
   const userid = await getuserid(user)
   const date = new Date()
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
-  let results = await database.sql`INSERT INTO meals(user,meal,calorie,date) values (${userid},${description},${calories},${date.getTime()}) `
+  let results = await database.sql`INSERT INTO meals(userid,meal,calorie,fat,prot,carb,date) values (${userid},${description},${calories},${fat},${prot},${carb},${date.getTime()}) `
   res.send(results);
 })
 
