@@ -34,9 +34,9 @@ function convertJson(input) {
       time: item.time,
       timestamp: item.timestamp,
       calories: item.calorie,
-      fat:item.fat,
-      protein:item.protein,
-      carb:item.carbs,
+      fat: item.fat,
+      protein: item.protein,
+      carb: item.carbs,
     });
   });
 
@@ -117,7 +117,7 @@ router.post('/processphoto', authenticate, async function (req, res) {
             {
               "type": "image_url",
               "image_url": {
-                "url": "data:image/png;base64,..."
+                "url": image
               }
             }
           ]
@@ -137,7 +137,7 @@ router.post('/processphoto', authenticate, async function (req, res) {
             {
               "type": "image_url",
               "image_url": {
-                "url": "data:image/png;base64,..."
+                "url": image
               }
             }
           ]
@@ -157,7 +157,7 @@ router.post('/processphoto', authenticate, async function (req, res) {
             {
               "type": "image_url",
               "image_url": {
-                "url": "data:image/png;base64,..."
+                "url": image
               }
             }
           ]
@@ -216,7 +216,6 @@ router.get('/:userid/info', authenticate, async (req, res) => {
   const userid = await getuserid(req.params.userid)
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
-  console.log(userid)
 
   let results = await database.sql`SELECT u.*, 
                 IFNULL(m.curcal, 0) AS curcal, 
@@ -236,7 +235,13 @@ router.get('/:userid/info', authenticate, async (req, res) => {
                     WHEN IFNULL(m.curcal, 0) > tm.cal THEN 'OVER'
                     ELSE 'UNDER'
                 END AS overunder,
-                Date('now') AS date
+                Date('now') AS date,
+                lm.meal AS latestmeal,
+                lm.calorie AS latestmealcal,
+                lm.fat AS latestmealfat,
+                lm.prot AS latestmealprotein,
+                lm.carb AS latestmealcarbs,
+                lm.date as latestmealdate
           FROM users u
           LEFT JOIN (
               SELECT userid, 
@@ -250,9 +255,16 @@ router.get('/:userid/info', authenticate, async (req, res) => {
               GROUP BY userid
           ) m ON u.id = m.userid
           LEFT JOIN targetmacros tm ON u.id = tm.userid
+          LEFT JOIN (
+              SELECT id AS mealid, userid, meal, calorie, fat, prot, carb, date
+              FROM meals
+              WHERE userid = ${userid}
+              ORDER BY date DESC
+              LIMIT 1
+          ) lm ON u.id = lm.userid
           WHERE u.id = ${userid}
           ORDER BY date DESC;`
-  
+
   res.send(results);
 })
 
@@ -353,15 +365,14 @@ router.delete('/:userid/meals/:mealid', authenticate, async (req, res) => {
 })
 
 
-router.post('/meals/log', authenticate, async (req, res) => {
-  console.log(`post - /meals/log`)
+router.post('/:userid/meal', authenticate, async (req, res) => {
+  console.log(`post - /meal`)
   const { description } = req.body;
   const { calories } = req.body;
   const { fat } = req.body;
   const { prot } = req.body;
   const { carb } = req.body;
-  const { user } = req.body;
-  const userid = await getuserid(user)
+  const userid = await getuserid(req.params.userid)
   const date = new Date()
 
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
@@ -369,5 +380,7 @@ router.post('/meals/log', authenticate, async (req, res) => {
   let results = await database.sql`INSERT INTO meals(userid,meal,calorie,fat,prot,carb,date) values (${userid},${description},${calories},${fat},${prot},${carb},${date.getTime()}) `
   res.send(results);
 })
+
+
 
 module.exports = router;
