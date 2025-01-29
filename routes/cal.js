@@ -88,10 +88,11 @@ router.get('/testSQLITE', async function (req, res) {
 });
 
 
-router.post('/processphoto', authenticate, async function (req, res) {
+router.post('/:userid/processphoto', authenticate, async function (req, res) {
   console.log('processphoto')
   const { image } = req.body;
   const { hint } = req.body;
+  const userid = await getuserid(req.params.userid)
 
 
   console.log('Received image:', image);
@@ -196,6 +197,10 @@ router.post('/processphoto', authenticate, async function (req, res) {
 
     console.log('Response from OpenAI:', completion.choices[0].message.content);
     content = JSON.parse(completion.choices[0].message.content.replace(/'/g, '"'))
+
+    let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
+    await database.sql`INSERT INTO mealscans(userid,response) values (${userid},${completion.choices[0].message.content}) `
+
     // content = JSON.parse("{'description':'A sandwich with melted cheese and vegetables, served with potato chips and a side of mixedfruit.','calories':700}".replace(/'/g, '"'))
 
     res.send(content);
@@ -218,52 +223,61 @@ router.get('/:userid/info', authenticate, async (req, res) => {
   let database = new Database(`sqlitecloud://cigq2czusz.sqlite.cloud:8860/calcam.sqlite?apikey=${process.env.SQLITEAPIKEY}`)
 
   let results = await database.sql`SELECT u.*, 
-                IFNULL(m.curcal, 0) AS curcal, 
-                tm.cal AS targetcalories, 
-                IFNULL(m.curcal, 0) AS currentcalories, 
-                tm.cal - IFNULL(m.curcal, 0) AS remainingcalories, 
-                tm.fat AS targetfat, 
-                IFNULL(m.curfat, 0) AS curfat, 
-                tm.fat - IFNULL(m.curfat, 0) AS remainingfat, 
-                tm.prot AS targetprotein, 
-                IFNULL(m.curprot, 0) AS curprotein, 
-                tm.prot - IFNULL(m.curprot, 0) AS remainingprotein, 
-                tm.carb AS targetcarbs, 
-                IFNULL(m.curcarb, 0) AS curcarbs, 
-                tm.carb - IFNULL(m.curcarb, 0) AS remainingcarbs, 
-                CASE 
-                    WHEN IFNULL(m.curcal, 0) > tm.cal THEN 'OVER'
-                    ELSE 'UNDER'
-                END AS overunder,
-                Date('now') AS date,
-                lm.meal AS latestmeal,
-                lm.calorie AS latestmealcal,
-                lm.fat AS latestmealfat,
-                lm.prot AS latestmealprotein,
-                lm.carb AS latestmealcarbs,
-                lm.date as latestmealdate
-          FROM users u
-          LEFT JOIN (
-              SELECT userid, 
-                    SUM(calorie) AS curcal, 
-                    SUM(fat) AS curfat, 
-                    SUM(prot) AS curprot, 
-                    SUM(carb) AS curcarb
-              FROM meals
-              WHERE userid = ${userid}
-              AND Date(Datetime(date / 1000, 'unixepoch')) = Date('now')
-              GROUP BY userid
-          ) m ON u.id = m.userid
-          LEFT JOIN targetmacros tm ON u.id = tm.userid
-          LEFT JOIN (
-              SELECT id AS mealid, userid, meal, calorie, fat, prot, carb, date
-              FROM meals
-              WHERE userid = ${userid}
-              ORDER BY date DESC
-              LIMIT 1
-          ) lm ON u.id = lm.userid
-          WHERE u.id = ${userid}
-          ORDER BY date DESC;`
+                                    IFNULL(m.curcal, 0) AS curcal, 
+                                    tm.cal AS targetcalories, 
+                                    IFNULL(m.curcal, 0) AS currentcalories, 
+                                    tm.cal - IFNULL(m.curcal, 0) AS remainingcalories, 
+                                    tm.fat AS targetfat, 
+                                    IFNULL(m.curfat, 0) AS curfat, 
+                                    tm.fat - IFNULL(m.curfat, 0) AS remainingfat, 
+                                    tm.prot AS targetprotein, 
+                                    IFNULL(m.curprot, 0) AS curprotein, 
+                                    tm.prot - IFNULL(m.curprot, 0) AS remainingprotein, 
+                                    tm.carb AS targetcarbs, 
+                                    IFNULL(m.curcarbs, 0) AS curcarbs, 
+                                    tm.carb - IFNULL(m.curcarbs, 0) AS remainingcarbs, 
+                                    CASE 
+                                        WHEN IFNULL(m.curcal, 0) > tm.cal THEN 'OVER'
+                                        ELSE 'UNDER'
+                                    END AS overunder,
+                                    Date('now') AS date,
+                                    lm.meal AS latestmeal,
+                                    lm.calorie AS latestmealcal,
+                                    lm.fat AS latestmealfat,
+                                    lm.prot AS latestmealprotein,
+                                    lm.carb AS latestmealcarbs,
+                                    lm.date AS latestmealdate,
+                                    IFNULL(ms.mealscanned, 0) AS mealscanned
+                              FROM users u
+                              LEFT JOIN (
+                                  SELECT userid, 
+                                        SUM(calorie) AS curcal, 
+                                        SUM(fat) AS curfat, 
+                                        SUM(prot) AS curprot, 
+                                        SUM(carb) AS curcarbs
+                                  FROM meals
+                                  WHERE userid = ${userid}
+                                    AND Date(Datetime(date / 1000, 'unixepoch')) = Date('now')
+                                  GROUP BY userid
+                              ) m ON u.id = m.userid
+                              LEFT JOIN targetmacros tm ON u.id = tm.userid
+                              LEFT JOIN (
+                                  SELECT id AS mealid, userid, meal, calorie, fat, prot, carb, date
+                                  FROM meals
+                                  WHERE userid = ${userid}
+                                  ORDER BY date DESC
+                                  LIMIT 1
+                              ) lm ON u.id = lm.userid
+                              LEFT JOIN (
+                                  SELECT userid, COUNT(*) AS mealscanned
+                                  FROM mealscans
+                                  WHERE userid = ${userid}
+                                    AND Date(Datetime(timestamp, 'unixepoch')) = Date('now')
+                                  GROUP BY userid
+                              ) ms ON u.id = ms.userid
+                              WHERE u.id =${userid}
+                              ORDER BY date DESC;
+                              `
 
   res.send(results);
 })
